@@ -59,7 +59,9 @@ pipeline {
                     def csvContent = "job_name,source_path,target_controller,migration_status\n" +
                                    "test-job-1,/jobs/vcbd/dmpd/ccrtpvweb/qa/test-job-1,controllerTarget,pending\n" +
                                    "test-job-2,/jobs/vcbd/dmpd/ccrtpvweb/production/test-job-2,controllerTarget,pending"
-                    
+                    // Configure git user for commits
+                    sh "git config user.email 'jenkins@migration.test'"
+                    sh "git config user.name 'Jenkins Migration Pipeline'"
                     
                     // Create new branch
                     sh "git checkout -b ${branchName}"
