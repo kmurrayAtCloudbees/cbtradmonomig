@@ -8,12 +8,13 @@ pipeline {
         string(name: 'CB_HOME', defaultValue: '/vcps_jenkins/jenkins_homes/vcps-monolith', description: 'Path to JENKINS_HOME on source')
         string(name: 'SSH_CREDENTIAL_ID', defaultValue: 'controllerssh', description: 'Credential ID for SSH private key')
         string(name: 'MULTI_TARGETS', defaultValue: 'controllerSource:192.168.4.241,controllerTarget:192.168.4.242', description: 'Comma-separated list of controller:IP pairs')
-        booleanParam(name: 'PLAN_DRY_RUN', defaultValue: false, description: 'Plan only: generate includes/assignments')
+        booleanParam(name: 'PLAN_DRY_RUN', defaultValue: true, description: 'Plan only: generate includes/assignments, skip Git push/PR')
         booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Perform rsync with --dry-run')
         booleanParam(name: 'INCLUDE_BUILD_LOGS', defaultValue: true, description: 'Include build logs during rsync')
         booleanParam(name: 'RELOAD_TARGET', defaultValue: false, description: 'Reload target Jenkins instance after sync')
         booleanParam(name: 'DISABLE_SOURCE_JOBS_AFTER_MIGRATION', defaultValue: false, description: 'Disable source jobs after migration')
         booleanParam(name: 'QUIET_DOWN_SOURCE', defaultValue: false, description: 'Put source controller into Quiet Down before final sync')
+        booleanParam(name: 'AUTO_CREATE_PR', defaultValue: false, description: 'Auto-create GitHub Pull Request after pushing migration plan')
         string(name: 'MODE', defaultValue: 'dry-run', description: 'dry-run | inactive | delta')
         string(name: 'MAX_FAILURES', defaultValue: '10', description: 'Max allowed failures before abort')
     }
@@ -24,132 +25,102 @@ pipeline {
     }
 
     stages {
-        stage('Test SSH Connectivity') {
+
+        stage('Validate Target Controller Connectivity') {
             steps {
                 script {
-                    def controllers = [
-                        '192.168.4.241', 
-                        '192.168.4.242'
-                    ]
-                    
-                    controllers.each { controller ->
-                        echo "Testing SSH connection to ${controller}"
-                        
+                    def controllers = params.MULTI_TARGETS.split(',').collect { it.split(':')[1].trim() }
+
+                    controllers.each { controllerIp ->
+                        echo "Testing SSH connection to ${controllerIp}"
+
                         withCredentials([sshUserPrivateKey(credentialsId: "${params.SSH_CREDENTIAL_ID}", keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
-                            sh "ssh -i \$SSH_KEY -o StrictHostKeyChecking=no \$SSH_USER@${controller} 'echo \"Connected to \$(hostname)\"'"
-                            sh "ssh -i \$SSH_KEY -o StrictHostKeyChecking=no \$SSH_USER@${controller} 'ls -la /var/lib/jenkins || ls -la /var/lib/cloudbees-*'"
-                            sh "ssh -i \$SSH_KEY -o StrictHostKeyChecking=no \$SSH_USER@${controller} 'echo \"Test from pipeline at \$(date)\" > /tmp/migration-test.txt'"
-                            sh "ssh -i \$SSH_KEY -o StrictHostKeyChecking=no \$SSH_USER@${controller} 'cat /tmp/migration-test.txt'"
+                            sh "ssh -i \$SSH_KEY -o StrictHostKeyChecking=no \$SSH_USER@${controllerIp} 'echo \"Connected to \$(hostname)\"'"
+                            sh "ssh -i \$SSH_KEY -o StrictHostKeyChecking=no \$SSH_USER@${controllerIp} 'ls -la /var/lib/jenkins || ls -la /var/lib/cloudbees-*'"
+                            sh "ssh -i \$SSH_KEY -o StrictHostKeyChecking=no \$SSH_USER@${controllerIp} 'echo \"Test from pipeline at \$(date)\" > /tmp/migration-test.txt'"
+                            sh "ssh -i \$SSH_KEY -o StrictHostKeyChecking=no \$SSH_USER@${controllerIp} 'cat /tmp/migration-test.txt'"
                         }
-                        
-                        echo "SSH test to ${controller} completed successfully"
+
+                        echo "SSH test to ${controllerIp} completed successfully"
                     }
                 }
             }
         }
 
-        stage('Test Git Operations') {
+        stage('Generate Migration Plan Files') {
             steps {
                 script {
-                    def sourceController = 'controllerSource'
-                    def timestamp = new Date().format('yyyyMMdd-HHmmss')
-                    def branchName = "${sourceController}-${timestamp}"
-                    
-                    // Create test CSV content
-                    def csvContent = "job_name,source_path,target_controller,migration_status\n" +
-                                   "test-job-1,/jobs/vcbd/dmpd/ccrtpvweb/qa/test-job-1,controllerTarget,pending\n" +
-                                   "test-job-2,/jobs/vcbd/dmpd/ccrtpvweb/production/test-job-2,controllerTarget,pending"
-                    // Configure git user for commits
-                    sh "git config user.email 'jenkins@migration.test'"
-                    sh "git config user.name 'Jenkins Migration Pipeline'"
-                    
-                    // Create new branch
-                    sh "git checkout -b ${branchName}"
-                    
-                    // Write CSV file to controller folder
-                    writeFile file: "${sourceController}/migration-manifest-${timestamp}.csv", text: csvContent
-                    
-                    // Add, commit and push
-                    sh "git add ${sourceController}/migration-manifest-${timestamp}.csv"
-                    sh "git commit -m 'Migration manifest for ${sourceController} - ${timestamp}'"
-                    sh "git push origin ${branchName}"
-                    
-                    echo "Successfully pushed migration manifest to branch: ${branchName}"
-                    echo "File location: ${sourceController}/migration-manifest-${timestamp}.csv"
-                }
-            }
-        }
+                    echo "Generating migration plan using shared library..."
 
-        stage('Init and Parse Controllers') {
-            steps {
-                script {
-                    echo "Initializing migration pipeline (mode: ${params.MODE})"
-                    echo "Parsing MULTI_TARGETS: ${params.MULTI_TARGETS}"
-
-                    def targets = params.MULTI_TARGETS.split(',').collectEntries { item ->
-                        def parts = item.split(':')
-                        [ (parts[0]): parts[1] ] // returns Map<String, String>
-                    }
-
-                    echo "Parsed controllers:"
-                    targets.each { controller, ip ->
-                        echo " - ${controller}: ${ip}"
-                    }
-                }
-            }
-        }
-
-        stage('Plan Job Grouping (PLAN_DRY_RUN)') {
-            when {
-                expression { return params.PLAN_DRY_RUN == true }
-            }
-            steps {
-                script {
-                    echo "[PLAN MODE] Executing migration file generation via Shared Library"
-                   
                     def migrationResults = generateMigrationFiles([
-                        parentFolderPath: "",
-                        migrationDepth: 0, // or adjust later
+                        parentFolderPath: "", // Optional: could be a parameter
+                        migrationDepth: 0,
                         activityThresholdDays: 180,
                         targetControllers: params.MULTI_TARGETS.split(',').collect { it.split(':')[0].trim() },
                         outputDir: "${params.SOURCE_CONFIG}",
                         verbose: true,
-                        dryRun: false, // Actually write the files now
-                        excludePatterns: [
-                            '**/test-*',
-                            '**/sandbox/*'
-                        ]
+                        dryRun: false,
+                        excludePatterns: ['**/test-*', '**/sandbox/*']
                     ])
-                    
-                    echo "[PLAN MODE] Migration file generation complete"
-                    echo "Total Jobs Analyzed: ${migrationResults.stats.totalJobs}"
-                    echo "Assignments: ${migrationResults.assignments.size()}"
+
+                    echo "Migration Plan Generated:"
+                    echo " - Jobs Analyzed: ${migrationResults.stats.totalJobs}"
+                    echo " - Assignments: ${migrationResults.assignments.size()}"
+                    echo " - Output Directory: ${params.SOURCE_CONFIG}"
+
+                    if (params.PLAN_DRY_RUN) {
+                        echo "[PLAN_DRY_RUN] Skipping Git commit/push and PR creation."
+
+                        // Optional file preview
+                        sh """
+                            echo 'Preview of assignments.csv:'
+                            head -n 10 ${params.SOURCE_CONFIG}/assignments.csv || echo 'No file found'
+                        """
+                    } else {
+                        echo "[LIVE PLAN] Committing and pushing migration plan..."
+                        def sourceController = 'controllerSource'
+                        def timestamp = new Date().format('yyyyMMdd-HHmmss')
+                        def branchName = "${sourceController}-${timestamp}"
+
+                        sh "git config user.email 'jenkins@migration.test'"
+                        sh "git config user.name 'Jenkins Migration Pipeline'"
+                        sh "git checkout -b ${branchName}"
+                        sh "git add ${params.SOURCE_CONFIG}/"
+                        sh "git commit -m 'Migration plan for ${sourceController} - ${timestamp}'"
+                        sh "git push origin ${branchName}"
+
+                        echo "Files pushed to branch '${branchName}'"
+
+                        if (params.AUTO_CREATE_PR) {
+                            echo "(Stub) This is where PR creation will be added in next step"
+                            // Future integration of gh pr create or GitHub API call
+                        }
+                    }
                 }
             }
         }
 
-        stage('Simulate Migration') {
+        stage('Execute Migration') {
             when {
                 expression { return params.PLAN_DRY_RUN == false }
             }
             steps {
                 script {
-                    def includes = ['vcbd/dmpd/ccrtpvweb/qa', 'vcbd/dmpd/ccrtpvweb/production'] // Replace with parsed includes.txt later
-                    def targets = params.MULTI_TARGETS.split(',').collectEntries { item ->
-                        def parts = item.split(':')
-                        [ (parts[0]): parts[1] ]
+                    def includes = ['vcbd/dmpd/ccrtpvweb/qa', 'vcbd/dmpd/ccrtpvweb/production'] // TODO: parse from includes.txt
+
+                    def targets = params.MULTI_TARGETS.split(',').collectEntries {
+                        def (name, ip) = it.split(':')
+                        [(name.trim()): ip.trim()]
                     }
 
                     targets.each { controller, ip ->
-
-                        echo "== Simulating sync to ${controller} @ ${ip} =="
+                        echo "== Executing rsync to ${controller} @ ${ip} =="
 
                         includes.each { folder ->
                             def sourcePath = "${params.CB_HOME}/jobs/${folder}"
                             def targetPath = "${params.CB_HOME}/jobs/${folder}"
 
                             def rsyncCommand = "rsync -az --delete ${sourcePath}/ ${controller}:${targetPath}/"
-
                             if (params.DRY_RUN) {
                                 rsyncCommand += " --dry-run --stats"
                             }
@@ -158,16 +129,18 @@ pipeline {
                                 rsyncCommand += " --exclude='**/builds/*/log' --exclude='**/*.log'"
                             }
 
-                            echo "[MOCK] Rsync command:"
-                            echo "  ${rsyncCommand}"
+                            echo "Rsync command prepared:"
+                            echo "${rsyncCommand}"
 
-                            // Mock post-sync actions
+                            // (Optional: Uncomment to run)
+                            // sh rsyncCommand
+
                             if (params.RELOAD_TARGET) {
-                                echo "[MOCK] Would reload configuration on target: ${controller}"
+                                echo "[TODO] Reload configuration on target: ${controller}"
                             }
 
                             if (params.DISABLE_SOURCE_JOBS_AFTER_MIGRATION) {
-                                echo "[MOCK] Would disable source jobs in: ${folder}"
+                                echo "[TODO] Disable source jobs under: ${folder}"
                             }
                         }
                     }
@@ -175,12 +148,12 @@ pipeline {
             }
         }
 
-        stage('Summary') {
+        stage('Migration Summary and Status') {
             steps {
                 echo "[SUMMARY] Mode: ${params.MODE}"
                 echo "[SUMMARY] DRY_RUN: ${params.DRY_RUN}"
                 echo "[SUMMARY] Plan Only: ${params.PLAN_DRY_RUN}"
-                echo "[SUMMARY] Job folders processed: MOCKED"
+                echo "[SUMMARY] Job folders processed: MOCKED/FIXME"
                 echo "[SUMMARY] Failures: ${env.FAILURE_COUNT}"
             }
         }
