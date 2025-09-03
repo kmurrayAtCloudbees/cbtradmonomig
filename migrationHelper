@@ -104,10 +104,27 @@ pipeline {
                 expression { return params.PLAN_DRY_RUN == true }
             }
             steps {
-                echo "[PLAN MODE] Generating job status groupings (active.txt, inactive.txt, combined.txt)..."
-                echo "[PLAN MODE] Would analyze current jobs on source controller"
-                echo "[PLAN MODE] Would derive assignments.csv for target routing"
-                echo "[PLAN MODE] Would commit results to Git repo or output to console"
+                script {
+                    echo "[PLAN MODE] Executing migration file generation via Shared Library"
+                   
+                    def migrationResults = generateMigrationFiles([
+                        parentFolderPath: "",
+                        migrationDepth: 0, // or adjust later
+                        activityThresholdDays: 180,
+                        targetControllers: params.MULTI_TARGETS.split(',').collect { it.split(':')[0].trim() },
+                        outputDir: "${params.SOURCE_CONFIG}",
+                        verbose: true,
+                        dryRun: false, // Actually write the files now
+                        excludePatterns: [
+                            '**/test-*',
+                            '**/sandbox/*'
+                        ]
+                    ])
+                    
+                    echo "[PLAN MODE] Migration file generation complete"
+                    echo "Total Jobs Analyzed: ${migrationResults.stats.totalJobs}"
+                    echo "Assignments: ${migrationResults.assignments.size()}"
+                }
             }
         }
 
