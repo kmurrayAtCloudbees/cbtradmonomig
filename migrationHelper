@@ -163,65 +163,48 @@ pipeline {
             }
             steps {
                 timeout(time: 15, unit: 'MINUTES') {
-                    script {
-                        def branchName = env.MIGRATION_BRANCH ?: error("Missing MIGRATION_BRANCH")
-                        def gitUrl = env.GIT_URL ?: env.GIT_URL_1
+                    sh '''
+                    set -e
 
-                        // Extract repo ID from Git URL
-                        def extractRepoId = { url ->
-                            def matcher = url =~ /[:\/]([^\/]+\/[^\/]+?)(\.git)?$/
-                            return matcher ? matcher[0][1] : null
-                        }
+                    echo "[WAIT] Watching for merged PR from branch '${MIGRATION_BRANCH}'..."
 
-                        def repoId = extractRepoId(gitUrl)
-                        if (!repoId) {
-                            error "Could not extract GitHub repo from: ${gitUrl}"
-                        }
+                    branch="${MIGRATION_BRANCH}"
+                    repoUrl="${GIT_URL:-$GIT_URL_1}"
+                    repo=$(echo "$repoUrl" | sed -E 's|.*[/:]([^/]+/[^./]+)(\\.git)?$|\\1|')
 
-                        echo "[WAIT] Watching PR for branch '${branchName}' in repo '${repoId}'"
+                    if [ -z "$repo" ]; then
+                    echo "❌ Failed to extract repo from: $repoUrl"
+                    exit 1
+                    fi
 
-                        def merged = false
-                        def pollInterval = 30
-                        def maxAttempts = (15 * 60 / pollInterval) // 15 mins in intervals
-                        def attempts = 0
+                    echo "Repo detected: $repo"
+                    attempt=0
+                    max_attempts=30
 
-                        while (!merged && attempts < maxAttempts) {
-                            echo "[WAIT] Checking for PR merge (attempt ${attempts + 1})..."
+                    while [ $attempt -lt $max_attempts ]; do
+                    echo "[WAIT] Attempt $((attempt + 1)) — checking GitHub PRs..."
 
-                            def response = sh(
-                                script: """
-                                curl -s https://api.github.com/repos/${repoId}/pulls?state=closed
-                                """,
-                                returnStdout: true
-                            ).trim()
+                    curl -s "https://api.github.com/repos/${repo}/pulls?state=closed" > prs.json
 
-                            def prMatch = false
-                            def prMerged = false
+                    # Find PR entry that matches the branch name
+                    match=$(awk -v branch="$branch" '
+                        $0 ~ "\"ref\": \""branch"\"" { found=1 }
+                        found && $0 ~ "\"merged\": true" { print "true"; exit }
+                        ' prs.json)
 
-                            def prList = new groovy.json.JsonSlurperClassic().parseText(response)
+                    if [ "$match" = "true" ]; then
+                        echo "PR from branch '$branch' has been merged!"
+                        exit 0
+                    fi
 
-                            prList.each { pr ->
-                                if (pr.head.ref == branchName) {
-                                    prMatch = true
-                                    prMerged = pr.merged == true
-                                }
-                            }
+                    echo "[WAIT] PR not merged yet — sleeping 30 seconds..."
+                    sleep 30
+                    attempt=$((attempt + 1))
+                    done
 
-                            if (prMatch && prMerged) {
-                                echo "Pull request for branch '${branchName}' has been merged!"
-                                merged = true
-                                break
-                            } else {
-                                echo "[WAIT] PR not merged yet, sleeping ${pollInterval}s..."
-                                sleep time: pollInterval, unit: 'SECONDS'
-                                attempts++
-                            }
-                        }
-
-                        if (!merged) {
-                            error "Timeout: PR for branch '${branchName}' was not merged in ${pollInterval * maxAttempts / 60} minutes."
-                        }
-                    }
+                    echo "Timeout reached. PR for branch '$branch' was not merged."
+                    exit 1
+                    '''
                 }
             }
         }
