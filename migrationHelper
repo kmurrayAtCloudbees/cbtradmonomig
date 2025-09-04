@@ -257,7 +257,9 @@ pipeline {
 
                     if (fileExists(assignmentFile)) {
                         def raw = readFile(assignmentFile).split('\n')
-                        def assignments = raw.tail().findAll { it.trim() }.collect { it.split(',') }
+                        def assignments = raw.size() > 1 
+                            ? raw[1..-1].findAll { it.trim() }.collect { it.split(',') }
+                            : []
                         assignmentCount = assignments.size()
                         controllerTargets = assignments.collect { it[1].trim() }.unique().sort()
                     }
