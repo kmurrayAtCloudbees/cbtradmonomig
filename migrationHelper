@@ -271,7 +271,7 @@ pipeline {
                 }
             }
         }
-
+    }
     post {
         success {
             echo "[DONE] Migration pipeline completed successfully."
