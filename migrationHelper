@@ -164,33 +164,62 @@ pipeline {
             steps {
                 timeout(time: 15, unit: 'MINUTES') {
                     script {
-                        def branchName = env.MIGRATION_BRANCH ?: error("Missing MIGRATION_BRANCH in env")
+                        def branchName = env.MIGRATION_BRANCH ?: error("Missing MIGRATION_BRANCH")
                         def gitUrl = env.GIT_URL ?: env.GIT_URL_1
+
+                        // Extract repo ID from Git URL
                         def extractRepoId = { url ->
                             def matcher = url =~ /[:\/]([^\/]+\/[^\/]+?)(\.git)?$/
                             return matcher ? matcher[0][1] : null
                         }
+
                         def repoId = extractRepoId(gitUrl)
                         if (!repoId) {
                             error "Could not extract GitHub repo from: ${gitUrl}"
                         }
 
-                        echo "[WAIT] Monitoring GitHub Pull Request for merge to main..."
+                        echo "[WAIT] Watching PR for branch '${branchName}' in repo '${repoId}'"
 
                         def merged = false
-                        while (!merged) {
-                            def prStatus = sh(
-                                script: "gh pr view ${branchName} --repo ${repoId} --json merged --jq .merged",
+                        def pollInterval = 30
+                        def maxAttempts = (15 * 60 / pollInterval) // 15 mins in intervals
+                        def attempts = 0
+
+                        while (!merged && attempts < maxAttempts) {
+                            echo "[WAIT] Checking for PR merge (attempt ${attempts + 1})..."
+
+                            def response = sh(
+                                script: """
+                                curl -s https://api.github.com/repos/${repoId}/pulls?state=closed
+                                """,
                                 returnStdout: true
                             ).trim()
 
-                            if (prStatus == "true") {
-                                echo "PR '${branchName}' has been merged to main."
-                                merged = true
-                            } else {
-                                echo "[WAIT] PR not merged yet — rechecking in 30s..."
-                                sleep 30
+                            def prMatch = false
+                            def prMerged = false
+
+                            def prList = new groovy.json.JsonSlurperClassic().parseText(response)
+
+                            prList.each { pr ->
+                                if (pr.head.ref == branchName) {
+                                    prMatch = true
+                                    prMerged = pr.merged == true
+                                }
                             }
+
+                            if (prMatch && prMerged) {
+                                echo "Pull request for branch '${branchName}' has been merged!"
+                                merged = true
+                                break
+                            } else {
+                                echo "[WAIT] PR not merged yet, sleeping ${pollInterval}s..."
+                                sleep time: pollInterval, unit: 'SECONDS'
+                                attempts++
+                            }
+                        }
+
+                        if (!merged) {
+                            error "Timeout: PR for branch '${branchName}' was not merged in ${pollInterval * maxAttempts / 60} minutes."
                         }
                     }
                 }
