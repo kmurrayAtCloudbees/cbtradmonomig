@@ -113,29 +113,42 @@ pipeline {
             steps {
                 timeout(time: 2, unit: 'MINUTES') {
                     script {
-                        def branchName = env.MIGRATION_BRANCH ?: error("Missing MIGRATION_BRANCH in env")
+                        def branchName = env.MIGRATION_BRANCH ?: error("Missing MIGRATION_BRANCH")
                         def gitUrl = env.GIT_URL ?: env.GIT_URL_1
+
+                        // Extract GitHub repo name from GIT_URL
                         def extractRepoId = { url ->
                             def matcher = url =~ /[:\/]([^\/]+\/[^\/]+?)(\.git)?$/
                             return matcher ? matcher[0][1] : null
                         }
+
                         def repoId = extractRepoId(gitUrl)
                         if (!repoId) {
                             error "Could not extract GitHub repo from: ${gitUrl}"
                         }
 
                         def prTitle = "Migration Plan for ${params.SOURCE_CONFIG}"
-                        def prBody = "Auto-generated PR from branch `${branchName}`.\n\nPlease review..."
+                        def prBody  = "Auto-generated PR from branch `${branchName}`.\n\nPlease review and approve."
 
-                        sh """
-                            gh pr create \
-                              --title '${prTitle}' \
-                              --body '${prBody.trim()}' \
-                              --base main \
-                              --head ${branchName} \
-                              --repo ${repoId} \
-                              --label 'migration-plan'
-                        """
+                        def apiUrl = "https://api.github.com/repos/${repoId}/pulls"
+
+                        // Construct payload for GitHub PR creation
+                        def payload = """{
+        "title": "${prTitle}",
+        "head": "${branchName}",
+        "base": "main",
+        "body": "${prBody.replaceAll('"', '\\"')}"
+        }"""
+
+                        // Just echo curl command for visibility and testing
+                        echo "=== DRY-RUN: GitHub PR Creation ==="
+                        echo "Command (not executed):"
+                        echo "curl -X POST \\"
+                        echo "  -H 'Authorization: token <token-goes-here>' \\"
+                        echo "  -H 'Content-Type: application/json' \\"
+                        echo "  -d '${payload}' \\"
+                        echo "  ${apiUrl}"
+                        echo "=== END ==="
                     }
                 }
             }
