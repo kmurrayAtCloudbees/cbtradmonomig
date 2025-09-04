@@ -125,16 +125,7 @@ pipeline {
                         }
 
                         def prTitle = "Migration Plan for ${params.SOURCE_CONFIG}"
-                        def prBody = """
-Auto-generated PR from branch \`${branchName}\`.
-
-Includes:
-- assignments.csv
-- active.txt / inactive.txt
-- includes/excludes
-
-Please review and approve before executing migration.
-"""
+                        def prBody = "Auto-generated PR from branch `${branchName}`.\n\nPlease review..."
 
                         sh """
                             gh pr create \
