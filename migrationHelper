@@ -116,70 +116,33 @@ stage('Commit and Push Migration Plan') {
                 expression { return !params.PLAN_DRY_RUN }
             }
             steps {
+                script {
+                    echo "Branch: ${env.MIGRATION_BRANCH}"
+                    echo "Commit: ${env.COMMIT_HASH}"
+                    echo "Review the migration files and create a PR"
+                }
+                
+                // Input step outside script block
                 timeout(time: 60, unit: 'MINUTES') {
-                    script {
-                        def branchName = env.MIGRATION_BRANCH
-                        def commitHash = env.COMMIT_HASH
-                        def gitUrl = env.GIT_URL ?: env.GIT_URL_1
-                        
-                        // Extract GitHub repo for PR URL
-                        def repoMatch = gitUrl =~ /[:\/]([^\/]+\/[^\/]+?)(\.git)?$/
-                        def repoId = repoMatch ? repoMatch[0][1] : "unknown/repo"
-                        def prUrl = "https://github.com/${repoId}/compare/main...${branchName}"
-
-                        echo "=========================================="
-                        echo "MANUAL REVIEW REQUIRED"
-                        echo "=========================================="
-                        echo "Branch: ${branchName}"
-                        echo "Commit: ${commitHash}"
-                        echo "Create PR at: ${prUrl}"
-                        echo ""
-                        echo "Migration files generated:"
-                        echo "- ${params.SOURCE_CONFIG}/active.txt"
-                        echo "- ${params.SOURCE_CONFIG}/inactive.txt" 
-                        echo "- ${params.SOURCE_CONFIG}/combined.txt"
-                        echo "- ${params.SOURCE_CONFIG}/assignments.csv"
-                        echo "- ${params.SOURCE_CONFIG}/excludes.txt"
-                        echo ""
-                        echo "Next Steps:"
-                        echo "1. Review the pushed migration files in the branch"
-                        echo "2. Create a Pull Request using the URL above"
-                        echo "3. Have team review and merge the PR"
-                        echo "4. Click 'Proceed' below to continue migration"
-                        echo "=========================================="
-
-                        // Manual approval step with choices
-                        def userChoice = input message: """
-Migration plan has been pushed to branch: ${branchName}
-
-Create PR at: ${prUrl}
-
-After reviewing the migration files, choose an option:
-""", 
+                    input message: "After creating and merging PR, choose action:",
                         ok: 'Submit',
                         submitterParameter: 'APPROVER',
                         parameters: [
-                            choice(
-                                name: 'ACTION', 
-                                choices: ['Merge Complete - Continue Migration', 'End Process - Resolve Issues'], 
-                                description: 'Select action after reviewing migration plan'
-                            )
+                            choice(name: 'ACTION', 
+                                    choices: ['Continue Migration', 'Stop Process'], 
+                                    description: 'Action after PR review')
                         ]
-                        
-                        echo "Action selected by ${env.APPROVER}: ${userChoice.ACTION}"
-                        
-                        if (userChoice.ACTION == 'End Process - Resolve Issues') {
-                            echo "Migration process stopped by user request."
-                            echo "Branch ${branchName} remains available for further review."
-                            error("Migration halted: User selected 'End Process - Resolve Issues'")
-                        } else {
-                            echo "Proceeding with migration execution..."
-                        }
+                }
+                
+                script {
+                    if (params.ACTION == 'Stop Process') {
+                        error("Migration stopped by user")
                     }
+                    echo "Continuing with migration..."
                 }
             }
         }
-
+        
         stage('Execute Migration') {
             when {
                 expression { return !params.PLAN_DRY_RUN }
