@@ -142,7 +142,7 @@ stage('Commit and Push Migration Plan') {
                 }
             }
         }
-        
+
         stage('Execute Migration') {
             when {
                 expression { return !params.PLAN_DRY_RUN }
@@ -154,7 +154,7 @@ stage('Commit and Push Migration Plan') {
 
                     if (fileExists(assignmentFile)) {
                         def raw = readFile(assignmentFile).split('\n')
-                        assignments = raw.tail().findAll { it.trim() }.collect { it.split(',') }
+                        assignments = raw.size() > 1 ? raw[1..-1].findAll { it.trim() }.collect { it.split(',') } : []
                         echo "Loaded ${assignments.size()} assignments from ${assignmentFile}"
                     } else {
                         error "assignments.csv not found at ${assignmentFile}"
