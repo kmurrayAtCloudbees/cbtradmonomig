@@ -4,20 +4,21 @@ pipeline {
     }
 
     parameters {
-        string(name: 'SOURCE_CONFIG', defaultValue: 'source-controller-vcps-monolith', description: 'Folder name representing the source controller (used for file structure and branch naming)')
-        string(name: 'CB_HOME', defaultValue: '/vcps_jenkins/jenkins_homes/vcps-monolith', description: 'Path to JENKINS_HOME on source')
-        string(name: 'SSH_CREDENTIAL_ID', defaultValue: 'controllerssh', description: 'Credential ID for SSH private key')
-        string(name: 'MULTI_TARGETS', defaultValue: 'controllerSource:192.168.4.241,controllerTarget:192.168.4.242', description: 'Comma-separated list of controller:IP pairs')
-        booleanParam(name: 'PLAN_DRY_RUN', defaultValue: true, description: 'Plan only: generate includes/assignments. No Git push or PR.')
-        booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Perform rsync with --dry-run')
-        booleanParam(name: 'INCLUDE_BUILD_LOGS', defaultValue: true, description: 'Include build logs during rsync')
-        booleanParam(name: 'RELOAD_TARGET', defaultValue: false, description: 'Reload target Jenkins instance after sync')
-        booleanParam(name: 'DISABLE_SOURCE_JOBS_AFTER_MIGRATION', defaultValue: false, description: 'Disable source jobs after migration')
-        booleanParam(name: 'QUIET_DOWN_SOURCE', defaultValue: false, description: 'Put source controller into Quiet Down before final sync')
-        booleanParam(name: 'AUTO_CREATE_PR', defaultValue: true, description: 'Automatically create a GitHub pull request after Git push')
-        string(name: 'MODE', defaultValue: 'dry-run', description: 'dry-run | inactive | delta')
-        string(name: 'MAX_FAILURES', defaultValue: '10', description: 'Max allowed failures before abort')
+        string(name: 'SOURCE_CONFIG', description: 'Folder name representing the source controller (used for file structure and branch naming)')
+        string(name: 'CB_HOME', description: 'Path to JENKINS_HOME on source')
+        string(name: 'SSH_CREDENTIAL_ID', description: 'Credential ID for SSH private key')
+        string(name: 'MULTI_TARGETS', description: 'Comma-separated list of controller:IP pairs')
+        booleanParam(name: 'PLAN_DRY_RUN', description: 'Plan only: generate includes/assignments. No Git push or PR.')
+        booleanParam(name: 'DRY_RUN', description: 'Perform rsync with --dry-run')
+        booleanParam(name: 'INCLUDE_BUILD_LOGS', description: 'Include build logs during rsync')
+        booleanParam(name: 'RELOAD_TARGET', description: 'Reload target Jenkins instance after sync')
+        booleanParam(name: 'DISABLE_SOURCE_JOBS_AFTER_MIGRATION', description: 'Disable source jobs after migration')
+        booleanParam(name: 'QUIET_DOWN_SOURCE', description: 'Put source controller into Quiet Down before final sync')
+        booleanParam(name: 'AUTO_CREATE_PR', description: 'Automatically create a GitHub pull request after Git push')
+        string(name: 'MODE', description: 'dry-run | inactive | delta')
+        string(name: 'MAX_FAILURES', description: 'Max allowed failures before abort')
     }
+  
 
     environment {
         ASSIGNMENTS_FILE = "assignments.csv"
@@ -25,7 +26,100 @@ pipeline {
     }
 
     stages {
-
+        stage('Validate Parameters') {
+            steps {
+                script {
+                    def errors = []
+                    
+                    // Required string parameters
+                    if (!params.SOURCE_CONFIG || params.SOURCE_CONFIG.trim().isEmpty()) {
+                        errors << "SOURCE_CONFIG is required"
+                    }
+                    
+                    if (!params.CB_HOME || params.CB_HOME.trim().isEmpty()) {
+                        errors << "CB_HOME is required"
+                    }
+                    
+                    if (!params.SSH_CREDENTIAL_ID || params.SSH_CREDENTIAL_ID.trim().isEmpty()) {
+                        errors << "SSH_CREDENTIAL_ID is required"
+                    }
+                    
+                    if (!params.MULTI_TARGETS || params.MULTI_TARGETS.trim().isEmpty()) {
+                        errors << "MULTI_TARGETS is required"
+                    }
+                    
+                    if (!params.MODE || params.MODE.trim().isEmpty()) {
+                        errors << "MODE is required"
+                    }
+                    
+                    if (!params.MAX_FAILURES || params.MAX_FAILURES.trim().isEmpty()) {
+                        errors << "MAX_FAILURES is required"
+                    }
+                    
+                    // Validate MODE values
+                    def validModes = ['dry-run', 'inactive', 'delta']
+                    if (params.MODE && !validModes.contains(params.MODE)) {
+                        errors << "MODE must be one of: ${validModes.join(', ')}"
+                    }
+                    
+                    // Validate MULTI_TARGETS format
+                    if (params.MULTI_TARGETS) {
+                        try {
+                            def targets = params.MULTI_TARGETS.split(',')
+                            targets.each { target ->
+                                if (!target.contains(':')) {
+                                    errors << "MULTI_TARGETS format error: '${target}' must be 'name:ip'"
+                                }
+                            }
+                        } catch (Exception e) {
+                            errors << "MULTI_TARGETS format error: ${e.message}"
+                        }
+                    }
+                    
+                    // Validate MAX_FAILURES is numeric
+                    if (params.MAX_FAILURES) {
+                        try {
+                            Integer.parseInt(params.MAX_FAILURES)
+                        } catch (NumberFormatException e) {
+                            errors << "MAX_FAILURES must be a number"
+                        }
+                    }
+                    
+                    // Validate CB_HOME path format
+                    if (params.CB_HOME && !params.CB_HOME.startsWith('/')) {
+                        errors << "CB_HOME must be an absolute path starting with '/'"
+                    }
+                    
+                    // Display all parameter values for verification
+                    echo "=== PARAMETER VALIDATION ==="
+                    echo "SOURCE_CONFIG: '${params.SOURCE_CONFIG}'"
+                    echo "CB_HOME: '${params.CB_HOME}'"
+                    echo "SSH_CREDENTIAL_ID: '${params.SSH_CREDENTIAL_ID}'"
+                    echo "MULTI_TARGETS: '${params.MULTI_TARGETS}'"
+                    echo "PLAN_DRY_RUN: ${params.PLAN_DRY_RUN}"
+                    echo "DRY_RUN: ${params.DRY_RUN}"
+                    echo "INCLUDE_BUILD_LOGS: ${params.INCLUDE_BUILD_LOGS}"
+                    echo "RELOAD_TARGET: ${params.RELOAD_TARGET}"
+                    echo "DISABLE_SOURCE_JOBS_AFTER_MIGRATION: ${params.DISABLE_SOURCE_JOBS_AFTER_MIGRATION}"
+                    echo "QUIET_DOWN_SOURCE: ${params.QUIET_DOWN_SOURCE}"
+                    echo "AUTO_CREATE_PR: ${params.AUTO_CREATE_PR}"
+                    echo "MODE: '${params.MODE}'"
+                    echo "MAX_FAILURES: '${params.MAX_FAILURES}'"
+                    echo "=========================="
+                    
+                    // Fail if any validation errors
+                    if (errors.size() > 0) {
+                        echo "VALIDATION FAILED:"
+                        errors.each { error ->
+                            echo "  ❌ ${error}"
+                        }
+                        error("Parameter validation failed. Please correct the above errors and try again.")
+                    } else {
+                        echo "✅ All parameters validated successfully"
+                    }
+                }
+            }
+        }
         stage('Validate Target Controller Connectivity') {
             steps {
                 script {
