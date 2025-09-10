@@ -138,6 +138,12 @@ pipeline {
                 }
             }
         }
+        
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
 
         stage('Generate Migration Plan Files') {
             steps {
