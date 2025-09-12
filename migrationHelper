@@ -245,14 +245,21 @@ stage('Commit and Push Migration Plan') {
                 script {
                     def assignmentFile = "${params.SOURCE_CONFIG}/${env.ASSIGNMENTS_FILE}"
                     def assignments = []
-
-                    if (fileExists(assignmentFile)) {
-                        def raw = readFile(assignmentFile).split('\n')
-                        assignments = raw.size() > 1 ? raw[1..-1].findAll { it.trim() }.collect { it.split(',') } : []
-                        echo "Loaded ${assignments.size()} assignments from ${assignmentFile}"
-                    } else {
-                        error "assignments.csv not found at ${assignmentFile}"
-                    }
+                        if (raw.size() > 1) {
+                            echo "=== CSV PARSING DEBUG ==="
+                            raw.eachWithIndex { line, index ->
+                                echo "Line ${index}: '${line}'"
+                            }
+                            
+                            assignments = raw[1..-1].findAll { it.trim() && !it.trim().isEmpty() }.collect { line ->
+                                def parts = line.split(',').collect { it.trim() }
+                                echo "Parsed line: ${parts}"
+                                return parts
+                            }
+                            
+                            echo "Final assignments: ${assignments}"
+                            echo "========================"
+                        }
 
                     def targets = params.MULTI_TARGETS.split(',').collectEntries {
                         def (name, ip) = it.trim().split(':')
