@@ -334,6 +334,9 @@ stage('Commit and Push Migration Plan') {
         }
     }
     post {
+        always {
+            cleanWs()
+        }
         success {
             echo "[DONE] Migration pipeline completed successfully."
         }
