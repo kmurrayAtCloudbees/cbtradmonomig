@@ -281,38 +281,23 @@ pipeline {
                         echo "1. Review the pushed migration files in the branch"
                         echo "2. Create a Pull Request using the URL above"
                         echo "3. Have team review and merge the PR"
-                        echo "4. Choose action below to continue or stop"
+                        echo "4. Click 'Merge Complete' to continue or 'Abort' to stop"
                         echo "=========================================="
-                    }
 
-                    script {
-                        def userChoice = input message: """
-        Migration plan has been pushed to branch: ${env.MIGRATION_BRANCH}
+                        input message: """
+        Migration plan pushed to branch: ${branchName}
 
-        Create PR at: https://github.com/[check-repo]/compare/main...${env.MIGRATION_BRANCH}
+        Create PR at: ${prUrl}
 
-        After reviewing the migration files, choose an option:
+        After reviewing and merging the PR, click 'Merge Complete' to continue with migration execution.
+
+        Click 'Abort' if you need to stop the process to resolve issues.
         """, 
-                        ok: 'Proceed with Selected Action',
-                        submitterParameter: 'APPROVER',
-                        parameters: [
-                            choice(
-                                name: 'ACTION', 
-                                choices: ['Merge Complete - Continue Migration', 'Stop Process - Resolve Issues'], 
-                                description: 'Select action after reviewing migration plan'
-                            )
-                        ]
+                        ok: 'Merge Complete - Continue Migration',
+                        submitterParameter: 'APPROVER'
                         
-                        echo "Action selected by ${env.APPROVER}: ${userChoice.ACTION}"
-                        
-                        if (userChoice.ACTION == 'Stop Process - Resolve Issues') {
-                            echo "Migration process stopped by user request."
-                            echo "Branch ${env.MIGRATION_BRANCH} remains available for further review."
-                            currentBuild.result = 'ABORTED'
-                            error("Migration halted: User selected 'Stop Process - Resolve Issues'")
-                        } else {
-                            echo "Proceeding with migration execution..."
-                        }
+                        echo "Migration approved by: ${env.APPROVER}"
+                        echo "Proceeding with migration execution..."
                     }
                 }
             }
