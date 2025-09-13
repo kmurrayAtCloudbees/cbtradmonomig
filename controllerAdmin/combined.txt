@@ -1,5 +1,6 @@
 Migration-Helper
 groovytest
 group/team/environment/build
+group/team/environment/groovytest
 group/team/environment/sshtest
 sshtest
