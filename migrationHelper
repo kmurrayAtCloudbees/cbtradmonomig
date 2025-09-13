@@ -111,11 +111,11 @@ pipeline {
                     if (errors.size() > 0) {
                         echo "VALIDATION FAILED:"
                         errors.each { error ->
-                            echo "  ❌ ${error}"
+                            echo " ${error}"
                         }
                         error("Parameter validation failed. Please correct the above errors and try again.")
                     } else {
-                        echo "✅ All parameters validated successfully"
+                        echo "All parameters validated successfully"
                     }
                 }
             }
@@ -244,7 +244,13 @@ stage('Commit and Push Migration Plan') {
             steps {
                 script {
                     def assignmentFile = "${params.SOURCE_CONFIG}/${env.ASSIGNMENTS_FILE}"
-                    def assignments = []
+                    
+                    if (fileExists(assignmentFile)) {
+                        def csvContent = readFile(assignmentFile)
+                        def raw = csvContent.split('\n')
+                        echo "Loaded ${raw.size()} lines from ${assignmentFile}"
+                        
+                        def assignments = []
                         if (raw.size() > 1) {
                             echo "=== CSV PARSING DEBUG ==="
                             raw.eachWithIndex { line, index ->
@@ -259,7 +265,12 @@ stage('Commit and Push Migration Plan') {
                             
                             echo "Final assignments: ${assignments}"
                             echo "========================"
+                        } else {
+                            error "assignments.csv appears to be empty or missing header"
                         }
+                    } else {
+                        error "assignments.csv not found at ${assignmentFile}"
+                    }
 
                     def targets = params.MULTI_TARGETS.split(',').collectEntries {
                         def (name, ip) = it.trim().split(':')
@@ -290,7 +301,7 @@ stage('Commit and Push Migration Plan') {
 
                         echo "[SIMULATION] Would run rsync for job folder:"
                         echo "  Source path: ${sourcePath}"
-                        echo "  Target     : ${targetController} ⇨ ${controllerIp}"
+                        echo "  Target     : ${targetController} => ${controllerIp}"
                         echo "  Rsync cmd  : ${rsyncCmd}"
                         
                         // Simulated rsync — real command is disabled
