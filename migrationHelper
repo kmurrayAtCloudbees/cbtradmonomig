@@ -171,7 +171,7 @@ pipeline {
             }
         }
 
-stage('Commit and Push Migration Plan') {
+        stage('Commit and Push Migration Plan') {
             when {
                 expression { return !params.PLAN_DRY_RUN }
             }
@@ -187,20 +187,52 @@ stage('Commit and Push Migration Plan') {
                 sh "git config user.name 'Jenkins Migration Pipeline'"
                 sh "git checkout -b \${MIGRATION_BRANCH}"
                 sh "git add ${params.SOURCE_CONFIG}/"
-                sh "git commit -m 'Migration plan for ${params.SOURCE_CONFIG} - \${BUILD_TIMESTAMP}'"
-                sh "git push origin \${MIGRATION_BRANCH}"
                 
                 script {
-                    // Get the commit hash for reference  
-                    def commitHash = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-                    env.COMMIT_HASH = commitHash
-
-                    echo "====== MIGRATION PLAN PUSHED ======"
-                    echo "Branch: ${env.MIGRATION_BRANCH}"
-                    echo "Commit Hash: ${commitHash}"
-                    echo "Repository: ${env.GIT_URL ?: env.GIT_URL_1}"
-                    echo "Files pushed to: ${params.SOURCE_CONFIG}/"
-                    echo "====================================="
+                    // Check if there are actually changes to commit
+                    def gitStatus = sh(script: "git status --porcelain", returnStdout: true).trim()
+                    
+                    if (gitStatus.isEmpty()) {
+                        echo "=========================================="
+                        echo "NO CHANGES DETECTED"
+                        echo "=========================================="
+                        echo "The migration files are identical to the existing ones."
+                        echo "This typically means:"
+                        echo "- No new jobs have been added"
+                        echo "- No job activity status has changed" 
+                        echo "- No migration parameters have changed"
+                        echo "=========================================="
+                        
+                        def userChoice = input message: "No changes detected in migration files. How would you like to proceed?",
+                            ok: 'Submit',
+                            parameters: [
+                                choice(name: 'ACTION', 
+                                    choices: ['Continue with Migration', 'Stop - No Migration Needed'], 
+                                    description: 'Choose action when no file changes detected')
+                            ]
+                        
+                        if (userChoice == 'Stop - No Migration Needed') {
+                            echo "Migration stopped - no changes to migrate."
+                            currentBuild.result = 'SUCCESS'
+                            return // Exit the stage successfully
+                        } else {
+                            echo "Proceeding with migration using existing files..."
+                            // Continue to Execute Migration stage with existing files
+                        }
+                    } else {
+                        sh "git commit -m 'Migration plan for ${params.SOURCE_CONFIG} - \${BUILD_TIMESTAMP}'"
+                        sh "git push origin \${MIGRATION_BRANCH}"
+                        
+                        def commitHash = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                        env.COMMIT_HASH = commitHash
+                        
+                        echo "====== MIGRATION PLAN PUSHED ======"
+                        echo "Branch: ${env.MIGRATION_BRANCH}"
+                        echo "Commit Hash: ${commitHash}"
+                        echo "Repository: ${env.GIT_URL ?: env.GIT_URL_1}"
+                        echo "Files pushed to: ${params.SOURCE_CONFIG}/"
+                        echo "====================================="
+                    }
                 }
             }
         }
@@ -210,29 +242,78 @@ stage('Commit and Push Migration Plan') {
                 expression { return !params.PLAN_DRY_RUN }
             }
             steps {
-                script {
-                    echo "Branch: ${env.MIGRATION_BRANCH}"
-                    echo "Commit: ${env.COMMIT_HASH}"
-                    echo "Review the migration files and create a PR"
-                }
-                
-                // Input step outside script block
                 timeout(time: 60, unit: 'MINUTES') {
-                    input message: "After creating and merging PR, choose action:",
-                        ok: 'Submit',
+                    script {
+                        def branchName = env.MIGRATION_BRANCH
+                        def commitHash = env.COMMIT_HASH
+                        def gitUrl = env.GIT_URL ?: env.GIT_URL_1
+                        
+                        // Simple string-based repo extraction
+                        def repoId = "unknown/repo"
+                        try {
+                            if (gitUrl && gitUrl.contains("github.com")) {
+                                def cleanUrl = gitUrl.replace("git@github.com:", "").replace("https://github.com/", "").replace(".git", "")
+                                if (cleanUrl.contains("/")) {
+                                    repoId = cleanUrl
+                                }
+                            }
+                        } catch (Exception e) {
+                            repoId = "check-git-repo-manually"
+                        }
+                        
+                        def prUrl = "https://github.com/${repoId}/compare/main...${branchName}"
+
+                        echo "=========================================="
+                        echo "MANUAL REVIEW REQUIRED"
+                        echo "=========================================="
+                        echo "Branch: ${branchName}"
+                        echo "Commit: ${commitHash}"
+                        echo "Create PR at: ${prUrl}"
+                        echo ""
+                        echo "Migration files generated:"
+                        echo "- ${params.SOURCE_CONFIG}/active.txt"
+                        echo "- ${params.SOURCE_CONFIG}/inactive.txt" 
+                        echo "- ${params.SOURCE_CONFIG}/combined.txt"
+                        echo "- ${params.SOURCE_CONFIG}/assignments.csv"
+                        echo "- ${params.SOURCE_CONFIG}/excludes.txt"
+                        echo ""
+                        echo "Next Steps:"
+                        echo "1. Review the pushed migration files in the branch"
+                        echo "2. Create a Pull Request using the URL above"
+                        echo "3. Have team review and merge the PR"
+                        echo "4. Choose action below to continue or stop"
+                        echo "=========================================="
+                    }
+
+                    script {
+                        def userChoice = input message: """
+        Migration plan has been pushed to branch: ${env.MIGRATION_BRANCH}
+
+        Create PR at: https://github.com/[check-repo]/compare/main...${env.MIGRATION_BRANCH}
+
+        After reviewing the migration files, choose an option:
+        """, 
+                        ok: 'Proceed with Selected Action',
                         submitterParameter: 'APPROVER',
                         parameters: [
-                            choice(name: 'ACTION', 
-                                    choices: ['Continue Migration', 'Stop Process'], 
-                                    description: 'Action after PR review')
+                            choice(
+                                name: 'ACTION', 
+                                choices: ['Merge Complete - Continue Migration', 'Stop Process - Resolve Issues'], 
+                                description: 'Select action after reviewing migration plan'
+                            )
                         ]
-                }
-                
-                script {
-                    if (params.ACTION == 'Stop Process') {
-                        error("Migration stopped by user")
+                        
+                        echo "Action selected by ${env.APPROVER}: ${userChoice.ACTION}"
+                        
+                        if (userChoice.ACTION == 'Stop Process - Resolve Issues') {
+                            echo "Migration process stopped by user request."
+                            echo "Branch ${env.MIGRATION_BRANCH} remains available for further review."
+                            currentBuild.result = 'ABORTED'
+                            error("Migration halted: User selected 'Stop Process - Resolve Issues'")
+                        } else {
+                            echo "Proceeding with migration execution..."
+                        }
                     }
-                    echo "Continuing with migration..."
                 }
             }
         }
