@@ -268,52 +268,52 @@ stage('Commit and Push Migration Plan') {
                         } else {
                             error "assignments.csv appears to be empty or missing header"
                         }
+
+                        def targets = params.MULTI_TARGETS.split(',').collectEntries {
+                            def (name, ip) = it.trim().split(':')
+                            [(name): ip]
+                        }
+
+                        assignments.each { row ->
+                            def jobPath = row[0].trim()
+                            def targetController = row[1].trim()
+
+                            if (!targets.containsKey(targetController)) {
+                                error "Controller '${targetController}' in assignments.csv is not listed in MULTI_TARGETS"
+                            }
+
+                            def controllerIp = targets[targetController]
+                            def sourcePath = "${params.CB_HOME}/jobs/${jobPath}"
+                            def targetPath = "${params.CB_HOME}/jobs/${jobPath}"
+
+                            def rsyncCmd = "rsync -az --delete ${sourcePath}/ ${targetController}:${targetPath}/"
+
+                            if (params.DRY_RUN) {
+                                rsyncCmd += " --dry-run --stats"
+                            }
+
+                            if (!params.INCLUDE_BUILD_LOGS) {
+                                rsyncCmd += " --exclude='**/builds/*/log' --exclude='**/*.log'"
+                            }
+
+                            echo "[SIMULATION] Would run rsync for job folder:"
+                            echo "  Source path: ${sourcePath}"
+                            echo "  Target     : ${targetController} => ${controllerIp}"
+                            echo "  Rsync cmd  : ${rsyncCmd}"
+                            
+                            // Simulated rsync — real command is disabled
+                            // sh rsyncCmd
+
+                            if (params.RELOAD_TARGET) {
+                                echo "[SIMULATION] Would reload Jenkins on target controller ${targetController}"
+                            }
+
+                            if (params.DISABLE_SOURCE_JOBS_AFTER_MIGRATION) {
+                                echo "[SIMULATION] Would disable source job: ${jobPath}"
+                            }
+                        }
                     } else {
                         error "assignments.csv not found at ${assignmentFile}"
-                    }
-
-                    def targets = params.MULTI_TARGETS.split(',').collectEntries {
-                        def (name, ip) = it.trim().split(':')
-                        [(name): ip]
-                    }
-
-                    assignments.each { row ->
-                        def jobPath = row[0].trim()
-                        def targetController = row[1].trim()
-
-                        if (!targets.containsKey(targetController)) {
-                            error "Controller '${targetController}' in assignments.csv is not listed in MULTI_TARGETS"
-                        }
-
-                        def controllerIp = targets[targetController]
-                        def sourcePath = "${params.CB_HOME}/jobs/${jobPath}"
-                        def targetPath = "${params.CB_HOME}/jobs/${jobPath}"
-
-                        def rsyncCmd = "rsync -az --delete ${sourcePath}/ ${targetController}:${targetPath}/"
-
-                        if (params.DRY_RUN) {
-                            rsyncCmd += " --dry-run --stats"
-                        }
-
-                        if (!params.INCLUDE_BUILD_LOGS) {
-                            rsyncCmd += " --exclude='**/builds/*/log' --exclude='**/*.log'"
-                        }
-
-                        echo "[SIMULATION] Would run rsync for job folder:"
-                        echo "  Source path: ${sourcePath}"
-                        echo "  Target     : ${targetController} => ${controllerIp}"
-                        echo "  Rsync cmd  : ${rsyncCmd}"
-                        
-                        // Simulated rsync — real command is disabled
-                        // sh rsyncCmd
-
-                        if (params.RELOAD_TARGET) {
-                            echo "[SIMULATION] Would reload Jenkins on target controller ${targetController}"
-                        }
-
-                        if (params.DISABLE_SOURCE_JOBS_AFTER_MIGRATION) {
-                            echo "[SIMULATION] Would disable source job: ${jobPath}"
-                        }
                     }
                 }
             }
