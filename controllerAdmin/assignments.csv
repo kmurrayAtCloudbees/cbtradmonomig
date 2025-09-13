@@ -2,5 +2,6 @@ folder,target_controller,job_count
 Migration-Helper,SourceController,1
 groovytest,targetController,1
 group/team/environment/build,SourceController,1
-group/team/environment/sshtest,targetController,1
-sshtest,SourceController,1
+group/team/environment/groovytest,targetController,1
+group/team/environment/sshtest,SourceController,1
+sshtest,targetController,1
