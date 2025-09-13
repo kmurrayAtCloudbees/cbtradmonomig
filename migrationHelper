@@ -196,29 +196,13 @@ pipeline {
                         echo "=========================================="
                         echo "NO CHANGES DETECTED"
                         echo "=========================================="
-                        echo "The migration files are identical to the existing ones."
+                        echo "The migration files are identical to existing ones."
                         echo "This typically means:"
                         echo "- No new jobs have been added"
                         echo "- No job activity status has changed" 
                         echo "- No migration parameters have changed"
+                        echo "Proceeding with migration using existing files..."
                         echo "=========================================="
-                        
-                        def userChoice = input message: "No changes detected in migration files. How would you like to proceed?",
-                            ok: 'Submit',
-                            parameters: [
-                                choice(name: 'ACTION', 
-                                    choices: ['Continue with Migration', 'Stop - No Migration Needed'], 
-                                    description: 'Choose action when no file changes detected')
-                            ]
-                        
-                        if (userChoice == 'Stop - No Migration Needed') {
-                            echo "Migration stopped - no changes to migrate."
-                            currentBuild.result = 'SUCCESS'
-                            return // Exit the stage successfully
-                        } else {
-                            echo "Proceeding with migration using existing files..."
-                            // Continue to Execute Migration stage with existing files
-                        }
                     } else {
                         sh "git commit -m 'Migration plan for ${params.SOURCE_CONFIG} - \${BUILD_TIMESTAMP}'"
                         sh "git push origin \${MIGRATION_BRANCH}"
