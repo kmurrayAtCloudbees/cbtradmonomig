@@ -17,7 +17,7 @@ parameters {
            ], 
            description: 'Migration execution mode: plan-only (generate files), test-migration (dry-run), safe-migration (inactive jobs), final-cutover (all jobs)')
     booleanParam(name: 'DRY_RUN', description: 'Perform rsync with --dry-run')
-    booleanParam(name: 'INCLUDE_BUILD_LOGS', description: 'Include build logs during rsync')
+    booleanParam(name: 'EXCLUDE_BUILD_HISTORY', defaultValue: true, description: 'Exclude build history and console logs from migration')
     booleanParam(name: 'RELOAD_TARGET', description: 'Reload target Jenkins instance after sync')
     booleanParam(name: 'DISABLE_SOURCE_JOBS_AFTER_MIGRATION', description: 'Disable source jobs after migration')
     booleanParam(name: 'QUIET_DOWN_SOURCE', description: 'Put source controller into Quiet Down before final sync (Required for final migration)')
@@ -105,7 +105,7 @@ parameters {
                     echo "MULTI_TARGETS: '${params.MULTI_TARGETS}'"
                     echo "MODE: '${params.MODE}'"
                     echo "DRY_RUN: ${params.DRY_RUN}"
-                    echo "INCLUDE_BUILD_LOGS: ${params.INCLUDE_BUILD_LOGS}"
+                    echo "EXCLUDE_BUILD_HISTORY: ${params.EXCLUDE_BUILD_HISTORY}"
                     echo "RELOAD_TARGET: ${params.RELOAD_TARGET}"
                     echo "DISABLE_SOURCE_JOBS_AFTER_MIGRATION: ${params.DISABLE_SOURCE_JOBS_AFTER_MIGRATION}"
                     echo "QUIET_DOWN_SOURCE: ${params.QUIET_DOWN_SOURCE}"
@@ -348,7 +348,7 @@ parameters {
                                 rsyncCmd += " --dry-run --stats"
                             }
 
-                            if (!params.INCLUDE_BUILD_LOGS) {
+                            if (params.EXCLUDE_BUILD_HISTORY) {
                                 rsyncCmd += " --exclude='**/builds/*/log' --exclude='**/*.log'"
                             }
 
