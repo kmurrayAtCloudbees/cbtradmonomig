@@ -22,6 +22,7 @@ parameters {
     booleanParam(name: 'DISABLE_SOURCE_JOBS_AFTER_MIGRATION', description: 'Disable source jobs after migration')
     booleanParam(name: 'QUIET_DOWN_SOURCE', description: 'Put source controller into Quiet Down before final sync (Required for final migration)')
     booleanParam(name: 'AUTO_CREATE_PR', description: 'Automatically create a GitHub pull request after Git push')
+    booleanParam(name: 'EXCLUDE_RBAC', defaultValue: false, description: 'Exclude folder and job RBAC permissions from migration')
     string(name: 'MAX_FAILURES', description: 'Max allowed failures before abort')
 }  
 
@@ -111,6 +112,7 @@ parameters {
                     echo "QUIET_DOWN_SOURCE: ${params.QUIET_DOWN_SOURCE}"
                     echo "AUTO_CREATE_PR: ${params.AUTO_CREATE_PR}"
                     echo "MAX_FAILURES: '${params.MAX_FAILURES}'"
+                    echo "EXCLUDE_RBAC: ${params.EXCLUDE_RBAC}"
                     echo "=========================="
                     
                     // Fail if any validation errors
@@ -350,6 +352,10 @@ parameters {
 
                             if (params.EXCLUDE_BUILD_HISTORY) {
                                 rsyncCmd += " --exclude='**/builds/*/log' --exclude='**/*.log'"
+                            }
+
+                            if (params.EXCLUDE_RBAC) {
+                                rsyncCmd += " --exclude='**/nectar-rbac.xml'"
                             }
 
                             echo "[SIMULATION] Would run rsync for job folder:"
