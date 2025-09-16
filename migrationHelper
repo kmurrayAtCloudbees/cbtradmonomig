@@ -40,6 +40,12 @@ parameters {
                     if (!params.SOURCE_CONFIG || params.SOURCE_CONFIG.trim().isEmpty()) {
                         errors << "SOURCE_CONFIG is required"
                     }
+
+                    if (params.SOURCE_CONFIG) {
+                        if (!fileExists("${params.SOURCE_CONFIG}/")) {
+                            errors << "SOURCE_CONFIG folder '${params.SOURCE_CONFIG}' does not exist in repository. Create the folder first to confirm intentional migration."
+                        }
+                    }
                     
                     if (!params.CB_HOME || params.CB_HOME.trim().isEmpty()) {
                         errors << "CB_HOME is required"
