@@ -3,22 +3,27 @@ pipeline {
         label 'cb-migration'
     }
 
-    parameters {
-        string(name: 'SOURCE_CONFIG', description: 'Folder name representing the source controller (used for file structure and branch naming)')
-        string(name: 'CB_HOME', description: 'Path to JENKINS_HOME on source')
-        string(name: 'SSH_CREDENTIAL_ID', description: 'Credential ID for SSH private key')
-        string(name: 'MULTI_TARGETS', description: 'Comma-separated list of controller:IP pairs')
-        booleanParam(name: 'PLAN_DRY_RUN', description: 'Plan only: generate includes/assignments. No Git push or PR.')
-        booleanParam(name: 'DRY_RUN', description: 'Perform rsync with --dry-run')
-        booleanParam(name: 'INCLUDE_BUILD_LOGS', description: 'Include build logs during rsync')
-        booleanParam(name: 'RELOAD_TARGET', description: 'Reload target Jenkins instance after sync')
-        booleanParam(name: 'DISABLE_SOURCE_JOBS_AFTER_MIGRATION', description: 'Disable source jobs after migration')
-        booleanParam(name: 'QUIET_DOWN_SOURCE', description: 'Put source controller into Quiet Down before final sync')
-        booleanParam(name: 'AUTO_CREATE_PR', description: 'Automatically create a GitHub pull request after Git push')
-        string(name: 'MODE', description: 'dry-run | inactive | delta')
-        string(name: 'MAX_FAILURES', description: 'Max allowed failures before abort')
-    }
-  
+parameters {
+    string(name: 'SOURCE_CONFIG', description: 'Folder name representing the source controller (used for file structure and branch naming)')
+    string(name: 'CB_HOME', description: 'Path to JENKINS_HOME on source')
+    string(name: 'SSH_CREDENTIAL_ID', description: 'Credential ID for SSH private key')
+    string(name: 'MULTI_TARGETS', description: 'Comma-separated list of controller:IP pairs')
+    choice(name: 'MODE', 
+           choices: [
+               'plan-only', 
+               'test-migration', 
+               'safe-migration', 
+               'final-cutover'
+           ], 
+           description: 'Migration execution mode: plan-only (generate files), test-migration (dry-run), safe-migration (inactive jobs), final-cutover (all jobs)')
+    booleanParam(name: 'DRY_RUN', description: 'Perform rsync with --dry-run')
+    booleanParam(name: 'INCLUDE_BUILD_LOGS', description: 'Include build logs during rsync')
+    booleanParam(name: 'RELOAD_TARGET', description: 'Reload target Jenkins instance after sync')
+    booleanParam(name: 'DISABLE_SOURCE_JOBS_AFTER_MIGRATION', description: 'Disable source jobs after migration')
+    booleanParam(name: 'QUIET_DOWN_SOURCE', description: 'Put source controller into Quiet Down before final sync (Required for final migration)')
+    booleanParam(name: 'AUTO_CREATE_PR', description: 'Automatically create a GitHub pull request after Git push')
+    string(name: 'MAX_FAILURES', description: 'Max allowed failures before abort')
+}  
 
     environment {
         ASSIGNMENTS_FILE = "assignments.csv"
@@ -48,16 +53,12 @@ pipeline {
                         errors << "MULTI_TARGETS is required"
                     }
                     
-                    if (!params.MODE || params.MODE.trim().isEmpty()) {
-                        errors << "MODE is required"
-                    }
-                    
                     if (!params.MAX_FAILURES || params.MAX_FAILURES.trim().isEmpty()) {
                         errors << "MAX_FAILURES is required"
                     }
                     
                     // Validate MODE values
-                    def validModes = ['dry-run', 'inactive', 'delta']
+                    def validModes = ['plan-only', 'test-migration', 'safe-migration', 'final-cutover']
                     if (params.MODE && !validModes.contains(params.MODE)) {
                         errors << "MODE must be one of: ${validModes.join(', ')}"
                     }
@@ -96,14 +97,13 @@ pipeline {
                     echo "CB_HOME: '${params.CB_HOME}'"
                     echo "SSH_CREDENTIAL_ID: '${params.SSH_CREDENTIAL_ID}'"
                     echo "MULTI_TARGETS: '${params.MULTI_TARGETS}'"
-                    echo "PLAN_DRY_RUN: ${params.PLAN_DRY_RUN}"
+                    echo "MODE: '${params.MODE}'"
                     echo "DRY_RUN: ${params.DRY_RUN}"
                     echo "INCLUDE_BUILD_LOGS: ${params.INCLUDE_BUILD_LOGS}"
                     echo "RELOAD_TARGET: ${params.RELOAD_TARGET}"
                     echo "DISABLE_SOURCE_JOBS_AFTER_MIGRATION: ${params.DISABLE_SOURCE_JOBS_AFTER_MIGRATION}"
                     echo "QUIET_DOWN_SOURCE: ${params.QUIET_DOWN_SOURCE}"
                     echo "AUTO_CREATE_PR: ${params.AUTO_CREATE_PR}"
-                    echo "MODE: '${params.MODE}'"
                     echo "MAX_FAILURES: '${params.MAX_FAILURES}'"
                     echo "=========================="
                     
@@ -111,7 +111,7 @@ pipeline {
                     if (errors.size() > 0) {
                         echo "VALIDATION FAILED:"
                         errors.each { error ->
-                            echo " ${error}"
+                            echo "  ❌ ${error}"
                         }
                         error("Parameter validation failed. Please correct the above errors and try again.")
                     } else {
@@ -151,7 +151,7 @@ pipeline {
                         targetControllers: params.MULTI_TARGETS.split(',').collect { it.split(':')[0].trim() },
                         outputDir: "${params.SOURCE_CONFIG}",
                         verbose: true,
-                        dryRun: false,
+                        dryRun: params.MODE == 'plan-only',  // Only dry run for plan-only mode
                         excludePatterns: ['**/test-*', '**/sandbox/*']
                     ])
 
@@ -173,7 +173,7 @@ pipeline {
 
         stage('Commit and Push Migration Plan') {
             when {
-                expression { return !params.PLAN_DRY_RUN }
+                expression { return params.MODE != 'plan-only' }
             }
             steps {
                 script {
@@ -223,7 +223,7 @@ pipeline {
 
         stage('Manual PR Review and Approval') {
             when {
-                expression { return !params.PLAN_DRY_RUN }
+                expression { return params.MODE != 'plan-only' }
             }
             steps {
                 timeout(time: 60, unit: 'MINUTES') {
@@ -289,7 +289,7 @@ pipeline {
 
         stage('Execute Migration') {
             when {
-                expression { return !params.PLAN_DRY_RUN }
+                expression { return params.MODE != 'plan-only' }
             }
             steps {
                 script {
