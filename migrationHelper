@@ -301,7 +301,26 @@ parameters {
             }
             steps {
                 script {
-                    def assignmentFile = "${params.SOURCE_CONFIG}/${env.ASSIGNMENTS_FILE}"
+                    // Determine which assignment file to use based on MODE
+                    def assignmentFileName
+                    switch (params.MODE) {
+                        case 'safe-migration':
+                            assignmentFileName = "inactive-assignments.csv"
+                            break
+                        case 'test-migration':
+                        case 'final-cutover':
+                        default:
+                            assignmentFileName = "assignments.csv"
+                            break
+                    }
+                    
+                    def assignmentFile = "${params.SOURCE_CONFIG}/${assignmentFileName}"
+                    
+                    // Fallback to main assignments.csv if mode-specific file doesn't exist
+                    if (!fileExists(assignmentFile)) {
+                        assignmentFile = "${params.SOURCE_CONFIG}/assignments.csv"
+                        echo "Using fallback assignments.csv file"
+                    }
                     
                     if (fileExists(assignmentFile)) {
                         def csvContent = readFile(assignmentFile)
@@ -346,8 +365,15 @@ parameters {
 
                             def rsyncCmd = "rsync -az --delete ${sourcePath}/ ${targetController}:${targetPath}/"
 
-                            if (params.DRY_RUN) {
-                                rsyncCmd += " --dry-run --stats"
+                            // MODE-based rsync behavior
+                            switch (params.MODE) {
+                                case 'test-migration':
+                                    rsyncCmd += " --dry-run --stats"
+                                    break
+                                case 'safe-migration':
+                                case 'final-cutover':
+                                    // Real transfer - no dry-run flag
+                                    break
                             }
 
                             if (params.EXCLUDE_BUILD_HISTORY) {
@@ -359,6 +385,7 @@ parameters {
                             }
 
                             echo "[SIMULATION] Would run rsync for job folder:"
+                            echo "  Mode: ${params.MODE}"
                             echo "  Source path: ${sourcePath}"
                             echo "  Target     : ${targetController} => ${controllerIp}"
                             echo "  Rsync cmd  : ${rsyncCmd}"
