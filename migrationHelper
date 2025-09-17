@@ -23,7 +23,7 @@ parameters {
     booleanParam(name: 'QUIET_DOWN_SOURCE', description: 'Put source controller into Quiet Down before final sync (Required for final migration)')
     booleanParam(name: 'AUTO_CREATE_PR', description: 'Automatically create a GitHub pull request after Git push')
     booleanParam(name: 'EXCLUDE_RBAC', defaultValue: false, description: 'Exclude folder and job RBAC permissions from migration')
-    string(name: 'MAX_FAILURES', description: 'Max allowed failures before abort')
+    string(name: 'MAX_FAILURES', defaultValue: '10', description: 'Max allowed failures before abort')
 }  
 
     environment {
@@ -143,6 +143,47 @@ parameters {
 
                         echo "SSH test to ${controllerIp} completed successfully"
                     }
+                }
+            }
+        }
+
+        stage('Pre-Migration Verification') {
+            when {
+                expression { return params.MODE == 'final-cutover' }
+            }
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "PRE-MIGRATION CHECKLIST VERIFICATION"
+                    echo "=========================================="
+                    echo "This is a FINAL MIGRATION (final-cutover mode)"
+                    echo "Critical manual steps must be completed:"
+                    echo ""
+                    echo "1. Source controller MUST be in Quiet Down mode"
+                    echo "2. Target controllers MUST be in Quiet Down mode" 
+                    echo "3. Source controller backup verified"
+                    echo "4. All teams notified of migration window"
+                    echo "5. Maintenance window confirmed and active"
+                    echo "=========================================="
+                    
+                    input message: """
+        FINAL MIGRATION - Manual verification required:
+
+        ✓ Source controller in Quiet Down mode (REQUIRED)
+        ✓ Target controllers in Quiet Down mode  
+        ✓ Source controller backup completed and verified
+        ✓ Development teams notified of migration window
+        ✓ Maintenance window confirmed and active
+
+        Confirm all manual prerequisites are complete before proceeding with final sync.
+
+        Click 'All Prerequisites Complete' to proceed or 'Abort' to cancel.
+        """,
+                    ok: 'All Prerequisites Complete - Proceed',
+                    submitterParameter: 'MIGRATION_APPROVER'
+                    
+                    echo "Final migration prerequisites verified by: ${env.MIGRATION_APPROVER}"
+                    echo "Proceeding with final cutover migration..."
                 }
             }
         }
