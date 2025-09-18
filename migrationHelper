@@ -204,6 +204,11 @@ parameters {
                     echo " - Jobs Analyzed: ${migrationResults.stats.totalJobs}"
                     echo " - Assignments: ${migrationResults.assignments.size()}"
                     echo " - Output Directory: ${params.SOURCE_CONFIG}"
+                    echo "Generated per-controller rsync input files:"
+                    def controllerKeys = migrationResults.assignments.collect { it.split(',')[1].trim() }.toSet().sort()
+                    controllerKeys.each { name ->
+                        echo " - ${params.SOURCE_CONFIG}/${name}.txt"
+                    }
 
                     if (params.PLAN_DRY_RUN) {
                         echo "[PLAN_DRY_RUN] Skipping Git operations."
@@ -305,7 +310,12 @@ parameters {
                         echo "- ${params.SOURCE_CONFIG}/combined.txt"
                         echo "- ${params.SOURCE_CONFIG}/assignments.csv"
                         echo "- ${params.SOURCE_CONFIG}/excludes.txt"
+                        echo "- Controller-specific rsync files:"
+                        controllerKeys.each { name ->
+                            echo "   - ${params.SOURCE_CONFIG}/${name}.txt"
+                        }
                         echo ""
+
                         echo "Next Steps:"
                         echo "1. Review the pushed migration files in the branch"
                         echo "2. Create a Pull Request using the URL above"
@@ -338,133 +348,103 @@ parameters {
             }
             steps {
                 script {
-                    // Determine which assignment file to use based on MODE
-                    def assignmentFileName
-                    switch (params.MODE) {
-                        case 'safe-migration':
-                            assignmentFileName = "inactive-assignments.csv"
-                            break
-                        case 'test-migration':
-                        case 'final-cutover':
-                        default:
-                            assignmentFileName = "assignments.csv"
-                            break
+                    def targets = params.MULTI_TARGETS.split(',').collectEntries {
+                        def (name, ip) = it.trim().split(':')
+                        [(name): ip]
                     }
-                    
-                    def assignmentFile = "${params.SOURCE_CONFIG}/${assignmentFileName}"
-                    
-                    // Fallback to main assignments.csv if mode-specific file doesn't exist
-                    if (!fileExists(assignmentFile)) {
-                        assignmentFile = "${params.SOURCE_CONFIG}/assignments.csv"
-                        echo "Using fallback assignments.csv file"
-                    }
-                    
-                    if (fileExists(assignmentFile)) {
-                        def csvContent = readFile(assignmentFile)
-                        def raw = csvContent.split('\n')
-                        echo "Loaded ${raw.size()} lines from ${assignmentFile}"
-                        
-                        def assignments = []
-                        if (raw.size() > 1) {
-                            echo "=== CSV PARSING DEBUG ==="
-                            raw.eachWithIndex { line, index ->
-                                echo "Line ${index}: '${line}'"
-                            }
-                            
-                            assignments = raw[1..-1].findAll { it.trim() && !it.trim().isEmpty() }.collect { line ->
-                                def parts = line.split(',').collect { it.trim() }
-                                echo "Parsed line: ${parts}"
-                                return parts
-                            }
-                            
-                            echo "Final assignments: ${assignments}"
-                            echo "========================"
-                        } else {
-                            error "assignments.csv appears to be empty or missing header"
+        
+                    targets.each { controller, ip ->
+                        def folderListFile = "${params.SOURCE_CONFIG}/${controller}.txt"
+        
+                        if (!fileExists(folderListFile)) {
+                            echo "${controller}.txt not found — skipping controller '${controller}'."
+                            return
                         }
-
-                        def targets = params.MULTI_TARGETS.split(',').collectEntries {
-                            def (name, ip) = it.trim().split(':')
-                            [(name): ip]
-                        }
-
-                        assignments.each { row ->
-                            def jobPath = row[0].trim()
-                            def targetController = row[1].trim()
-
-                            if (!targets.containsKey(targetController)) {
-                                error "Controller '${targetController}' in assignments.csv is not listed in MULTI_TARGETS"
-                            }
-
-                            def controllerIp = targets[targetController]
-                            def sourcePath = "${params.CB_HOME}/jobs/${jobPath}"
-                            def targetPath = "${params.CB_HOME}/jobs/${jobPath}"
-
-                            def rsyncCmd = "rsync -az --delete ${sourcePath}/ ${targetController}:${targetPath}/"
-
-                            // MODE-based rsync behavior
+        
+                        echo "Processing folders assigned to: ${controller} (${ip})"
+                        def folders = readFile(folderListFile).split('\n').findAll { it.trim() }
+        
+                        folders.each { folder ->
+                            def sourcePath = "${params.CB_HOME}/jobs/${folder}"
+                            def targetPath = "${params.CB_HOME}/jobs/${folder}"
+        
+                            def rsyncCmd = "rsync -az --delete ${sourcePath}/ ${controller}:${targetPath}/"
+        
                             switch (params.MODE) {
                                 case 'test-migration':
                                     rsyncCmd += " --dry-run --stats"
                                     break
                                 case 'safe-migration':
                                 case 'final-cutover':
-                                    // Real transfer - no dry-run flag
+                                    // No extra flags — real copy
                                     break
                             }
-
+        
                             if (params.EXCLUDE_BUILD_HISTORY) {
                                 rsyncCmd += " --exclude='**/builds/*/log' --exclude='**/*.log'"
                             }
-
+        
                             if (params.EXCLUDE_RBAC) {
                                 rsyncCmd += " --exclude='**/nectar-rbac.xml'"
                             }
-
+        
                             echo "[SIMULATION] Would run rsync for job folder:"
-                            echo "  Mode: ${params.MODE}"
-                            echo "  Source path: ${sourcePath}"
-                            echo "  Target     : ${targetController} => ${controllerIp}"
+                            echo "  Controller : ${controller}"
+                            echo "  Folder path: ${folder}"
                             echo "  Rsync cmd  : ${rsyncCmd}"
-                            
-                            // Simulated rsync — real command is disabled
+        
+                            // Uncomment below to trigger real rsync
                             // sh rsyncCmd
                         }
-                    } else {
-                        error "assignments.csv not found at ${assignmentFile}"
                     }
                 }
             }
         }
 
-        stage('Migration Summary and Status') {
-            steps {
-                script {
-                    def assignmentFile = "${params.SOURCE_CONFIG}/${env.ASSIGNMENTS_FILE}"
-                    def assignmentCount = 0
-                    def controllerTargets = []
-
-                    if (fileExists(assignmentFile)) {
-                        def raw = readFile(assignmentFile).split('\n')
-                        def assignments = raw.size() > 1 
-                            ? raw[1..-1].findAll { it.trim() }.collect { it.split(',') }
-                            : []
-                        assignmentCount = assignments.size()
-                        controllerTargets = assignments.collect { it[1].trim() }.unique().sort()
-                    }
-
-                    echo "[SUMMARY] Mode: ${params.MODE}"
-                    echo "[SUMMARY] DRY_RUN: ${params.DRY_RUN}"
-                    echo "[SUMMARY] Plan Only: ${params.PLAN_DRY_RUN}"
-                    echo "[SUMMARY] Total Assignments: ${assignmentCount}"
-                    echo "[SUMMARY] Target Controllers: ${controllerTargets.join(', ')}"
-                    echo "[SUMMARY] Failures: ${env.FAILURE_COUNT}"
+    stage('Migration Summary and Status') {
+        steps {
+            script {
+                def assignmentFile = "${params.SOURCE_CONFIG}/${env.ASSIGNMENTS_FILE}"
+                def assignmentCount = 0
+                def controllerTargets = []
+    
+                if (fileExists(assignmentFile)) {
+                    def raw = readFile(assignmentFile).split('\n')
+                    def assignments = raw.size() > 1 
+                        ? raw[1..-1].findAll { it.trim() }.collect { it.split(',') }
+                        : []
+                    assignmentCount = assignments.size()
+                    controllerTargets = assignments.collect { it[1].trim() }.unique().sort()
                 }
+    
+                echo "========== MIGRATION SUMMARY =========="
+                echo "Mode: ${params.MODE}"
+                echo "Plan Only: ${params.MODE == 'plan-only'}"
+                echo "DRY_RUN: ${params.DRY_RUN}"
+                echo "RBAC Excluded: ${params.EXCLUDE_RBAC}"
+                echo "Total Assignments: ${assignmentCount}"
+                echo "Target Controllers from assignments.csv:"
+                controllerTargets.each { echo "  - ${it}" }
+    
+                echo ""
+                controllerTargets.each { controller ->
+                    def filePath = "${params.SOURCE_CONFIG}/${controller}.txt"
+                    if (fileExists(filePath)) {
+                        def lines = readFile(filePath).split('\n').findAll { it.trim() }.size()
+                        echo "  → ${controller}.txt: ${lines} folder(s)"
+                    } else {
+                        echo "  ✘ ${controller}.txt not found"
+                    }
+                }
+                echo "======================================="
             }
         }
     }
+    
     post {
         always {
+            // Archive per-controller TXT input files for rsync
+            archiveArtifacts artifacts: "${params.SOURCE_CONFIG}/*.txt", allowEmptyArchive: true
             cleanWs()
         }
         success {
